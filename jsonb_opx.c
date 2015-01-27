@@ -59,10 +59,10 @@ jsonb_delete_text(PG_FUNCTION_ARGS)
     int32 nest_level = 0;
     int32 array_level = 0;
 
-	/* array element variables for use during deconstruction */
-	Datum *datums;
-	bool *nulls;
-	int32 count;
+    /* array element variables for use during deconstruction */
+    Datum *datums;
+    bool *nulls;
+    int32 count;
 
     /* individual array values values from incoming text[] */
     text *array_element_text;
