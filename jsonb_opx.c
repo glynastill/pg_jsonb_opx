@@ -37,11 +37,11 @@ Datum
 jsonb_delete_text(PG_FUNCTION_ARGS)
 {
     /* general loops */
-	int i;
+    int i;
 
     /* pointers to incoming jsonb and text[] data */
     Jsonb *input_jsonb = PG_GETARG_JSONB(0);
-	ArrayType *input_array = PG_GETARG_ARRAYTYPE_P(1);
+    ArrayType *input_array = PG_GETARG_ARRAYTYPE_P(1);
     
     /* pointers to return jsonb_value data and state to be converted to jsonb on return */
     JsonbParseState *state = NULL;
