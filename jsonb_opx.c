@@ -87,6 +87,10 @@ jsonb_delete_text(PG_FUNCTION_ARGS)
     deconstruct_array(input_array, TEXTOID, -1, false, 'i', 
                        &datums, &nulls, &count);
 
+    /* if the array is empty there's no work to do so return the input value */ 
+    if (count == 0) 
+        PG_RETURN_JSONB(input_jsonb);
+
     /* first check to make sure at least one key exists - this is potentially just extra unwanted work */
     for (i=0; i<count; i++)
     {
@@ -233,6 +237,19 @@ jsonb_delete_jsonb(PG_FUNCTION_ARGS)
     /* pointer to lookup on input_jsonb_b */
     JsonbValue *jsonb_lookup_value = NULL;
     
+    /* check that supplied jsonb isn't non object, i.e. scalar or array */
+    if (!JB_ROOT_IS_OBJECT(input_jsonb_a) || !JB_ROOT_IS_OBJECT(input_jsonb_b))
+        ereport(ERROR,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                errmsg("cannot call on a non-object")));
+
+    /*
+     * check if either supplied jsonb is empty and return the other if so
+     * this idea was copied from https://github.com/erthalion/jsonbx/blob/master/jsonbx.c
+     */
+    if (JB_ROOT_COUNT(input_jsonb_b) == 0)
+        PG_RETURN_JSONB(input_jsonb_a);
+
     jsonb_iterator = JsonbIteratorInit(&input_jsonb_a->root);
 
     while ((jsonb_iterator_token = JsonbIteratorNext(&jsonb_iterator, &jsonb_iterator_value, skip_nested)) != WJB_DONE) {
@@ -362,6 +379,15 @@ jsonb_concat_jsonb(PG_FUNCTION_ARGS)
         ereport(ERROR,
             (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                 errmsg("cannot call on a non-object")));
+    
+    /*
+     * check if either supplied jsonb is empty and return the other if so
+     * this idea was copied from https://github.com/erthalion/jsonbx/blob/master/jsonbx.c
+     */
+    if (JB_ROOT_COUNT(input_jsonb_a) == 0)
+        PG_RETURN_JSONB(input_jsonb_b);
+    else if (JB_ROOT_COUNT(input_jsonb_b) == 0)
+        PG_RETURN_JSONB(input_jsonb_a);
 
     /*
      * The following is essentially a cut 'n shut job; discarding the closing root 
