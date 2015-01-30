@@ -1,24 +1,29 @@
+-- CREATE OR REPLACE FUNCTION public.jsonb_delete (jsonb, text) 
+-- RETURNS jsonb
+--     AS 'SELECT jsonb_delete($1, ARRAY[$2]);'
+-- LANGUAGE SQL IMMUTABLE STRICT; 
+-- COMMENT ON FUNCTION public.jsonb_delete(jsonb, text) IS 'delete key in second argument from first argument';
+
+CREATE OR REPLACE FUNCTION public.jsonb_delete (jsonb, text) 
+RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'jsonb_delete_key'
+LANGUAGE C IMMUTABLE STRICT; 
+COMMENT ON FUNCTION public.jsonb_delete(jsonb, text) IS 'delete key in second argument from first argument';
+
+-- DROP OPERATOR - (jsonb, text);
+CREATE OPERATOR - ( PROCEDURE = public.jsonb_delete, LEFTARG = jsonb, RIGHTARG = text);
+COMMENT ON OPERATOR - (jsonb, text) IS 'delete key from left operand';
+
+--
 CREATE OR REPLACE FUNCTION public.jsonb_delete(jsonb, text[]) 
 RETURNS jsonb
-	AS 'MODULE_PATHNAME', 'jsonb_delete_text'
+	AS 'MODULE_PATHNAME', 'jsonb_delete_keys'
 LANGUAGE C IMMUTABLE STRICT;
 COMMENT ON FUNCTION public.jsonb_delete(jsonb, text[]) IS 'delete keys in second argument from first argument';
 
 -- DROP OPERATOR - (jsonb, text[]);
 CREATE OPERATOR - ( PROCEDURE = public.jsonb_delete, LEFTARG = jsonb, RIGHTARG = text[]);
 COMMENT ON OPERATOR - (jsonb, text[]) IS 'delete keys from left operand';
-
---
-
-CREATE OR REPLACE FUNCTION public.jsonb_delete (jsonb, text) 
-RETURNS jsonb
-    AS 'SELECT jsonb_delete($1, ARRAY[$2]);'
-LANGUAGE SQL IMMUTABLE STRICT; 
-COMMENT ON FUNCTION public.jsonb_delete(jsonb, text) IS 'delete key in second argument from first argument';
-
--- DROP OPERATOR - (jsonb, text);
-CREATE OPERATOR - ( PROCEDURE = public.jsonb_delete, LEFTARG = jsonb, RIGHTARG = text);
-COMMENT ON OPERATOR - (jsonb, text) IS 'delete key from left operand';
 
 --
 
