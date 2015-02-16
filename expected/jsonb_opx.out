@@ -1,0 +1,168 @@
+\i /usr/local/pgsql/share/contrib/jsonb_opx.sql
+-- CREATE OR REPLACE FUNCTION public.jsonb_delete (jsonb, text) 
+-- RETURNS jsonb
+--     AS 'SELECT jsonb_delete($1, ARRAY[$2]);'
+-- LANGUAGE SQL IMMUTABLE STRICT; 
+-- COMMENT ON FUNCTION public.jsonb_delete(jsonb, text) IS 'delete key in second argument from first argument';
+CREATE OR REPLACE FUNCTION public.jsonb_delete (jsonb, text) 
+RETURNS jsonb
+    AS '$libdir/jsonb_opx', 'jsonb_delete_key'
+LANGUAGE C IMMUTABLE STRICT; 
+COMMENT ON FUNCTION public.jsonb_delete(jsonb, text) IS 'delete key in second argument from first argument';
+-- DROP OPERATOR - (jsonb, text);
+CREATE OPERATOR - ( PROCEDURE = public.jsonb_delete, LEFTARG = jsonb, RIGHTARG = text);
+COMMENT ON OPERATOR - (jsonb, text) IS 'delete key from left operand';
+--
+CREATE OR REPLACE FUNCTION public.jsonb_delete(jsonb, text[]) 
+RETURNS jsonb
+	AS '$libdir/jsonb_opx', 'jsonb_delete_keys'
+LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION public.jsonb_delete(jsonb, text[]) IS 'delete keys in second argument from first argument';
+-- DROP OPERATOR - (jsonb, text[]);
+CREATE OPERATOR - ( PROCEDURE = public.jsonb_delete, LEFTARG = jsonb, RIGHTARG = text[]);
+COMMENT ON OPERATOR - (jsonb, text[]) IS 'delete keys from left operand';
+--
+CREATE OR REPLACE FUNCTION public.jsonb_delete(jsonb, jsonb) 
+RETURNS jsonb
+	AS '$libdir/jsonb_opx', 'jsonb_delete_jsonb'
+LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION public.jsonb_delete(jsonb, jsonb) IS 'delete matching pairs in second argument from first argument';
+-- DROP OPERATOR - (jsonb, jsonb);
+CREATE OPERATOR - ( PROCEDURE = public.jsonb_delete, LEFTARG = jsonb, RIGHTARG = jsonb);
+COMMENT ON OPERATOR - (jsonb, jsonb) IS 'delete matching pairs from left operand';
+--
+CREATE OR REPLACE FUNCTION public.jsonb_concat(jsonb, jsonb)
+RETURNS jsonb
+    AS '$libdir/jsonb_opx', 'jsonb_concat_jsonb'
+LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION public.jsonb_concat(jsonb, jsonb) IS 'concatenate first and second jsonb arguments';
+-- DROP OPERATOR || (jsonb, jsonb);
+CREATE OPERATOR || ( PROCEDURE = public.jsonb_concat, LEFTARG = jsonb, RIGHTARG = jsonb);
+COMMENT ON OPERATOR || (jsonb, jsonb) IS 'concatenate jsonb types';
+-------------------------------------------------------------------------------
+-- Tests for jsonb - text
+-------------------------------------------------------------------------------
+-- text deletion from array containers will only delete string types as only strings can be keys:
+SELECT '[1, "1", "2", 2]'::jsonb - '2'::text;
+  ?column?   
+-------------
+ [1, "1", 2]
+(1 row)
+
+-- simple text deletion from an object container
+SELECT '{"a": 1, "b": 2, "c": 3}'::jsonb - 'b'::text;
+     ?column?     
+------------------
+ {"a": 1, "c": 3}
+(1 row)
+
+-- simple text deletion from an object container should only match keys
+SELECT '{"a": 1, "b": 2, "c": 3}'::jsonb - '3'::text;
+         ?column?         
+--------------------------
+ {"a": 1, "b": 2, "c": 3}
+(1 row)
+
+-- others
+SELECT '["1", "2", true, false]'::jsonb - '2'::text;
+      ?column?      
+--------------------
+ ["1", true, false]
+(1 row)
+
+SELECT '["1", "2", "2", "2"]'::jsonb - '2'::text;
+ ?column? 
+----------
+ ["1"]
+(1 row)
+
+-------------------------------------------------------------------------------
+-- Tests for jsonb - text[]
+-------------------------------------------------------------------------------
+-- text[] deletion from array containers will only delete string types as only strings can be keys:
+SELECT '[1, "1", "2", 2]'::jsonb - array['1','2'];
+ ?column? 
+----------
+ [1, 2]
+(1 row)
+
+-- simple text[] deletion from an object container
+SELECT '{"a": 1, "b": 2, "c": 3}'::jsonb - ARRAY['a',' b'];
+     ?column?     
+------------------
+ {"b": 2, "c": 3}
+(1 row)
+
+-- simple text[] deletion from an object container should only match keys
+SELECT '{"a": 1, "b": 2, "c": 3}'::jsonb - ARRAY['1',' 2'];
+         ?column?         
+--------------------------
+ {"a": 1, "b": 2, "c": 3}
+(1 row)
+
+-------------------------------------------------------------------------------
+-- Tests for jsonb - jsonb
+-------------------------------------------------------------------------------
+-- jsonb deletion from an object should match on key/value
+SELECT '{"a": 1, "b": 2, "c": 3}'::jsonb - '{"a": 4, "b": 2}'::jsonb;
+     ?column?     
+------------------
+ {"a": 1, "c": 3}
+(1 row)
+
+-- jsonb deletion from an array should only match on key
+SELECT '["a", "b", "c"]'::jsonb - '{"a": 4, "b": 2}'::jsonb;
+ ?column? 
+----------
+ ["c"]
+(1 row)
+
+-- jsonb deletion from nested objectys should not be part matched
+SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": 4}}'::jsonb - '{"a": 4, "b": 2}'::jsonb
+-- but a match of all nested values should narcg
+SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": 4}}'::jsonb - '{"d": {"a": 4}, "b": 2}'::jsonb
+-- others
+SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": false}}'::jsonb - '{"d": {"a": false}, "b": 2}'::jsonb
+-------------------------------------------------------------------------------
+-- Tests for jsonb || jsonb
+-------------------------------------------------------------------------------
+-- duplicates should automatically be removed by lower level logic
+SELECT '{"a": 1, "b": 2, "c": 3}'::jsonb || '{"a": 4, "b": 2, "d": 4}'::jsonb;
+ERROR:  syntax error at or near "SELECT"
+LINE 3: SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": 4}}'::jsonb - '{...
+        ^
+-- concatentation of arrays
+SELECT '["a", "b"]'::jsonb || '["c"]'::jsonb;
+    ?column?     
+-----------------
+ ["a", "b", "c"]
+(1 row)
+
+-- concatentation of scalars and arrays should be wrapped into arrays
+SELECT '["a", "b"]'::jsonb || '"c"'::jsonb;
+    ?column?     
+-----------------
+ ["a", "b", "c"]
+(1 row)
+
+-- likewise concatentation of objects and arrays should be wrapped into arrays
+SELECT '["a", "b"]'::jsonb || '{"a": 4, "b": 2}'::jsonb;
+           ?column?           
+------------------------------
+ ["a", "b", {"a": 4, "b": 2}]
+(1 row)
+
+-- and all concatentation should be in natural order supplied
+SELECT '{"a": 4, "b": 2}'::jsonb || '["a", "b"]'::jsonb || '["c", "d"]'::jsonb;
+                ?column?                
+----------------------------------------
+ [{"a": 4, "b": 2}, "a", "b", "c", "d"]
+(1 row)
+
+-- others
+SELECT 'false'::jsonb || '["a", "b"]'::jsonb || '["c", "d"]'::jsonb;
+          ?column?           
+-----------------------------
+ [false, "a", "b", "c", "d"]
+(1 row)
+
