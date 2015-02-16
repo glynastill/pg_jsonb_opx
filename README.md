@@ -1,10 +1,20 @@
 jsonb_opx
 =========
 
-Test delete and concatenation operators for PostgreSQL 9.4, this is purely for experimentation and contain errors and bad form.  
+Missing operators for jsonb in PostgreSQL 9.4, this may contain some errors and bad form so please test that it suits your requirements before using in any production scenario.
 
-**USE ON PRODUCTION SYSTEMS AT OWN RISK**
+Provides
+--------
 
+* deletion using **-** operator
+  * jsonb_delete(jsonb, text)
+  * jsonb_delete(jsonb, text[])
+  * jsonb_delete(jsonb, jsonb)
+* concatenation using **||** operator
+  * jsonb_concat(jsonb, jsonb)
+
+More detail
+-----------
 * delete operator **"-"** provided by functions *jsonb_delete(jsonb, text) jsonb_delete(jsonb, text[]) and jsonb_delete(jsonb, jsonb)*
     Provides:
         jsonb - text
