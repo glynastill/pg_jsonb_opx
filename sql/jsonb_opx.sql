@@ -40,14 +40,14 @@ SELECT '{"a": 1, "b": 2, "c": 3}'::jsonb - '{"a": 4, "b": 2}'::jsonb;
 -- jsonb deletion from an array should only match on key
 SELECT '["a", "b", "c"]'::jsonb - '{"a": 4, "b": 2}'::jsonb;
 
--- jsonb deletion from nested objectys should not be part matched
-SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": 4}}'::jsonb - '{"a": 4, "b": 2}'::jsonb
+-- jsonb deletion from nested objects should not be part matched
+SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": 4}}'::jsonb - '{"a": 4, "b": 2}'::jsonb;
 
 -- but a match of all nested values should narcg
-SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": 4}}'::jsonb - '{"d": {"a": 4}, "b": 2}'::jsonb
+SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": 4}}'::jsonb - '{"d": {"a": 4}, "b": 2}'::jsonb;
 
 -- others
-SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": false}}'::jsonb - '{"d": {"a": false}, "b": 2}'::jsonb
+SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": false}}'::jsonb - '{"d": {"a": false}, "b": 2}'::jsonb;
 
 -------------------------------------------------------------------------------
 -- Tests for jsonb || jsonb

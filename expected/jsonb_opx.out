@@ -117,20 +117,37 @@ SELECT '["a", "b", "c"]'::jsonb - '{"a": 4, "b": 2}'::jsonb;
  ["c"]
 (1 row)
 
--- jsonb deletion from nested objectys should not be part matched
-SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": 4}}'::jsonb - '{"a": 4, "b": 2}'::jsonb
+-- jsonb deletion from nested objects should not be part matched
+SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": 4}}'::jsonb - '{"a": 4, "b": 2}'::jsonb;
+        ?column?         
+-------------------------
+ {"c": 3, "d": {"a": 4}}
+(1 row)
+
 -- but a match of all nested values should narcg
-SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": 4}}'::jsonb - '{"d": {"a": 4}, "b": 2}'::jsonb
+SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": 4}}'::jsonb - '{"d": {"a": 4}, "b": 2}'::jsonb;
+     ?column?     
+------------------
+ {"a": 4, "c": 3}
+(1 row)
+
 -- others
-SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": false}}'::jsonb - '{"d": {"a": false}, "b": 2}'::jsonb
+SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": false}}'::jsonb - '{"d": {"a": false}, "b": 2}'::jsonb;
+     ?column?     
+------------------
+ {"a": 4, "c": 3}
+(1 row)
+
 -------------------------------------------------------------------------------
 -- Tests for jsonb || jsonb
 -------------------------------------------------------------------------------
 -- duplicates should automatically be removed by lower level logic
 SELECT '{"a": 1, "b": 2, "c": 3}'::jsonb || '{"a": 4, "b": 2, "d": 4}'::jsonb;
-ERROR:  syntax error at or near "SELECT"
-LINE 3: SELECT '{"a": 4, "b": 2, "c": 3, "d": {"a": 4}}'::jsonb - '{...
-        ^
+             ?column?             
+----------------------------------
+ {"a": 4, "b": 2, "c": 3, "d": 4}
+(1 row)
+
 -- concatentation of arrays
 SELECT '["a", "b"]'::jsonb || '["c"]'::jsonb;
     ?column?     
