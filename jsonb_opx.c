@@ -17,6 +17,7 @@
 #include "utils/jsonb.h"
 #include "catalog/pg_type.h"
 #include "utils/builtins.h"
+#include "jsonb_opx.h"
 
 #ifdef PG_MODULE_MAGIC
 	PG_MODULE_MAGIC;
@@ -45,8 +46,8 @@ jsonb_delete_key(PG_FUNCTION_ARGS)
     JsonbValue *return_jsonb_value = NULL;
 
     /* pointer to iterator for input_jsonb and lookup value data */
-    JsonbValue  jsonb_lookup_value;
-    JsonbValue *jsonb_value = NULL;
+    JsonbValue  jsonb_lookup_key;
+    JsonbValue *jsonb_lookup_value = NULL;
     JsonbIterator *jsonb_iterator;
     JsonbValue  jsonb_iterator_value;
     int32 jsonb_iterator_token;
@@ -56,26 +57,31 @@ jsonb_delete_key(PG_FUNCTION_ARGS)
     int32 nest_level = 0;
     int32 array_level = 0;
 
-    /* if we are not deaing with an array first check to make sure the key exists - this is potentially just extra unwanted work */
+    /*
+     * if we are not deaing with an array first check to make sure the key exists 
+     * this is potentially just extra unwanted work 
+     */
     if (!JB_ROOT_IS_ARRAY(input_jsonb)) 
     {
-        jsonb_lookup_value.type = jbvString;
-        jsonb_lookup_value.val.string.val = VARDATA_ANY(input_text);
-        jsonb_lookup_value.val.string.len = VARSIZE_ANY_EXHDR(input_text);
+        jsonb_lookup_key.type = jbvString;
+        jsonb_lookup_key.val.string.val = VARDATA_ANY(input_text);
+        jsonb_lookup_key.val.string.len = VARSIZE_ANY_EXHDR(input_text);
 
-        jsonb_value = findJsonbValueFromContainer(&input_jsonb->root,
-            JB_FOBJECT | JB_FARRAY, &jsonb_lookup_value);
+        jsonb_lookup_value = findJsonbValueFromContainer(&input_jsonb->root,
+            JB_FOBJECT | JB_FARRAY, &jsonb_lookup_key);
 
-        if (jsonb_value == NULL)
+        if (jsonb_lookup_value == NULL)
             PG_RETURN_JSONB(input_jsonb);
     }
 
     /*
-    * If we've been supplied with an existing key iterate round json data and rebuild with key/value excluded.
+    * If we've been supplied with an existing key iterate round json data and rebuild 
+    * with key/element excluded.
     *
-    * skip_key, nest_level and array_level are crude counts to check if the the value for the key is closed
-    * and ensure we don't match on keys within nested objects.  Because we are recursing into nested elements
-    * but blindly just pushing them onto the return value we can get away without deeper knowledge of the json?
+    * skip_key, nest_level and array_level are crude counts to check if the the value 
+    * for the key is closed and ensure we don't match on keys within nested objects.  
+    * Because we are recursing into nested elements but blindly just pushing them onto 
+    * the return value we can get away without deeper knowledge of the json?
     */
 
     jsonb_iterator = JsonbIteratorInit(&input_jsonb->root);
@@ -100,8 +106,10 @@ jsonb_delete_key(PG_FUNCTION_ARGS)
             {
                 if (jsonb_iterator_value.type == jbvString) 
                 {
-                    if (strncmp(pnstrdup(jsonb_iterator_value.val.string.val,jsonb_iterator_value.val.string.len),
-                        VARDATA_ANY(input_text), VARSIZE_ANY_EXHDR(input_text)) == 0) 
+                    if ((jsonb_iterator_value.val.string.len == VARSIZE_ANY_EXHDR(input_text)) &&
+                        (memcmp(jsonb_iterator_value.val.string.val,
+                            VARDATA_ANY(input_text),
+                            jsonb_iterator_value.val.string.len) == 0))
                         break;
                 }
             }
@@ -114,10 +122,13 @@ jsonb_delete_key(PG_FUNCTION_ARGS)
             {
                 skip_key++;
             }
-            else if (nest_level == 1)
+            else if (nest_level == 1 && array_level == 0)
             {
-                if (strncmp(pnstrdup(jsonb_iterator_value.val.string.val,jsonb_iterator_value.val.string.len),
-                    VARDATA_ANY(input_text), VARSIZE_ANY_EXHDR(input_text)) == 0) {
+                if ((jsonb_iterator_value.val.string.len == VARSIZE_ANY_EXHDR(input_text)) &&
+                    (memcmp(jsonb_iterator_value.val.string.val,
+                        VARDATA_ANY(input_text),
+                        jsonb_iterator_value.val.string.len) == 0))
+                {
                     skip_key++;
                     break;
                 }
@@ -181,8 +192,6 @@ jsonb_delete_keys(PG_FUNCTION_ARGS)
     JsonbValue *return_jsonb_value = NULL;
 
     /* pointer to iterator for input_jsonb and lookup value data */
-    JsonbValue  jsonb_lookup_value;
-    JsonbValue *jsonb_value = NULL;
     JsonbIterator *jsonb_iterator;
     JsonbValue  jsonb_iterator_value;
     int32 jsonb_iterator_token;
@@ -199,7 +208,6 @@ jsonb_delete_keys(PG_FUNCTION_ARGS)
 
     /* individual array values values from incoming text[] */
     text *array_element_text;
-    bool exists = false;
 
     /* assert input_array is a text array type */
     Assert(ARR_ELEMTYPE(input_array) == TEXTOID);
@@ -218,42 +226,15 @@ jsonb_delete_keys(PG_FUNCTION_ARGS)
     if (count == 0) 
         PG_RETURN_JSONB(input_jsonb);
 
-    /* if we are not deaing with an array first check to make sure the key exists - this is potentially just extra unwanted work */
-    if (!JB_ROOT_IS_ARRAY(input_jsonb)) 
-    {
-        for (i=0; i<count; i++)
-        {
-            if (nulls[i])
-                continue;
-
-            array_element_text = DatumGetTextP(datums[i]);
-
-            jsonb_lookup_value.type = jbvString;
-            jsonb_lookup_value.val.string.val = VARDATA_ANY(array_element_text);
-            jsonb_lookup_value.val.string.len = VARSIZE_ANY_EXHDR(array_element_text);
-            
-            jsonb_value = findJsonbValueFromContainer(&input_jsonb->root,
-                JB_FOBJECT | JB_FARRAY, &jsonb_lookup_value);
-
-            if (jsonb_value != NULL) 
-            {
-                exists = true;
-                break;
-            }
-        }
-
-        if (!exists) 
-            PG_RETURN_JSONB(input_jsonb);
-    }
-
     /*
-    * If we've been supplied with existing keys iterate round json data matching those keys.
+    * If we've been supplied with existing keys iterate round json data and rebuild 
+    * with keys/elements excluded.
     *
-    * skip_key, nest_level and array_level are crude counts to check if the the value for the key is closed
-    * and ensure we don't match on keys within nested objects.  Because we are recursing into nested elements
-    * but blindly just pushing them onto the return value we can get away without deeper knowledge of the json?
+    * skip_key, nest_level and array_level are crude counts to check if the the value 
+    * for the key is closed and ensure we don't match on keys within nested objects.  
+    * Because we are recursing into nested elements but blindly just pushing them onto 
+    * the return value we can get away without deeper knowledge of the json?
     */
-
     jsonb_iterator = JsonbIteratorInit(&input_jsonb->root);
 
     while ((jsonb_iterator_token = JsonbIteratorNext(&jsonb_iterator, &jsonb_iterator_value, false)) != WJB_DONE) {
@@ -271,20 +252,22 @@ jsonb_delete_keys(PG_FUNCTION_ARGS)
                 return_jsonb_value = pushJsonbValue(&state, WJB_BEGIN_OBJECT, &jsonb_iterator_value);
             break;
         case WJB_ELEM:
-            /* only match array elements if they are text */
+            /* only match array elements if they are text or null */
             if (skip_key == 0 && nest_level == 0 && array_level > 0) 
             {
-                if (jsonb_iterator_value.type == jbvString) 
+                if (jsonb_iterator_value.type == jbvString || jsonb_iterator_value.type == jbvNull) 
                 {
                     for (i=0; i<count; i++)
                     {
-                        if (nulls[i])
-                            continue;
+                        if (!nulls[i])
+                            array_element_text = DatumGetTextP(datums[i]);
+                        else 
+                            array_element_text = NULL;
 
-                        array_element_text = DatumGetTextP(datums[i]);
-
-                        if (strncmp(pnstrdup(jsonb_iterator_value.val.string.val,jsonb_iterator_value.val.string.len),
-                            VARDATA_ANY(array_element_text), VARSIZE_ANY_EXHDR(array_element_text)) == 0) 
+                        if (((array_element_text != NULL) && (jsonb_iterator_value.val.string.len == VARSIZE_ANY_EXHDR(array_element_text)) &&
+                            (memcmp(jsonb_iterator_value.val.string.val,
+                                VARDATA_ANY(array_element_text),
+                                jsonb_iterator_value.val.string.len) == 0)) || ((array_element_text == NULL) && (jsonb_iterator_value.type == jbvNull)))
                         {
                             skip_key = 1;
                             break;
@@ -306,17 +289,19 @@ jsonb_delete_keys(PG_FUNCTION_ARGS)
             {
                 skip_key++;
             }
-            else if (nest_level == 1)
+            else if (nest_level == 1 && array_level == 0)
             {
                 for (i=0; i<count; i++)
                 {
                     if (nulls[i])
                         continue;
 
-                    array_element_text = DatumGetTextP(datums[i]);
+                   array_element_text = DatumGetTextP(datums[i]);
 
-                    if (strncmp(pnstrdup(jsonb_iterator_value.val.string.val,jsonb_iterator_value.val.string.len),
-                        VARDATA_ANY(array_element_text), VARSIZE_ANY_EXHDR(array_element_text)) == 0) 
+                    if ((jsonb_iterator_value.val.string.len == VARSIZE_ANY_EXHDR(array_element_text)) &&
+                        (memcmp(jsonb_iterator_value.val.string.val,
+                            VARDATA_ANY(array_element_text),
+                            jsonb_iterator_value.val.string.len) == 0))
                     {
                         skip_key++;
                         break;
@@ -386,9 +371,6 @@ jsonb_delete_jsonb(PG_FUNCTION_ARGS)
     int32 jsonb_iterator_token;
     bool skip_nested = false;
     
-    /* pointer to iterator and container for pushing nested parts of input_jsonb_a */
-    JsonbContainer *nest_jsonb_container_a;
-    JsonbIterator *nest_jsonb_iterator;
     bool push = true;
 
     /* pointer to lookup on input_jsonb_b */
@@ -416,9 +398,22 @@ jsonb_delete_jsonb(PG_FUNCTION_ARGS)
             return_jsonb_value = pushJsonbValue(&state, jsonb_iterator_token, &jsonb_iterator_value);
         break;
         case WJB_ELEM:
+            /*
+             * findJsonbValueFromContainer only supports jsonb arrays containting scalar values? 
+             * If container is something like '[[1]]' or '[{"a":1}]' will error with "invalid jsonb scalar type"
+             */
             jsonb_lookup_value = findJsonbValueFromContainer(&input_jsonb_b->root, JB_FOBJECT | JB_FARRAY, &jsonb_iterator_value);
-            if (jsonb_lookup_value == NULL)
-                return_jsonb_value = pushJsonbValue(&state, WJB_ELEM, &jsonb_iterator_value);
+            if (jsonb_lookup_value == NULL) 
+            {
+                if (jsonb_iterator_value.type == jbvBinary) 
+                {
+                    return_jsonb_value = pushJsonbBinary(state, jsonb_iterator_value.val.binary.data);
+                }
+                else 
+                {
+                    return_jsonb_value = pushJsonbValue(&state, WJB_ELEM, &jsonb_iterator_value);
+                }
+            }
             break;
         case WJB_KEY :
             jsonb_lookup_value = findJsonbValueFromContainer(&input_jsonb_b->root, JB_FOBJECT | JB_FARRAY, &jsonb_iterator_value);
@@ -430,29 +425,32 @@ jsonb_delete_jsonb(PG_FUNCTION_ARGS)
 
             if (jsonb_lookup_value != NULL)
             {
+
                 if (jsonb_lookup_value->type == jsonb_iterator_value.type) 
                 {
                     switch (jsonb_lookup_value->type) 
                     {
+                        case jbvNull:
+                                push = false;
+                        break;
                         case jbvNumeric:
-                            if (strcmp(
-                                DatumGetCString(DirectFunctionCall1(numeric_out, PointerGetDatum(jsonb_lookup_value->val.numeric))),
-                                DatumGetCString(DirectFunctionCall1(numeric_out, PointerGetDatum(jsonb_iterator_value.val.numeric)))
-                                ) == 0) 
+                            if (DatumGetBool(DirectFunctionCall2(numeric_eq, 
+                                PointerGetDatum(jsonb_lookup_value->val.numeric), 
+                                PointerGetDatum(jsonb_iterator_value.val.numeric))))
                                 push = false;
                         break;
                         case jbvString:
-                            if (strcmp(
-                                pnstrdup(jsonb_lookup_value->val.string.val,jsonb_lookup_value->val.string.len),
-                                pnstrdup(jsonb_iterator_value.val.string.val,jsonb_iterator_value.val.string.len)
-                                ) == 0)
+                            if ((jsonb_lookup_value->val.string.len == jsonb_iterator_value.val.string.len) &&
+                                (memcmp(jsonb_lookup_value->val.string.val, 
+                                    jsonb_iterator_value.val.string.val, 
+                                    jsonb_lookup_value->val.string.len) == 0))
                                 push = false;
                         break;
                         case jbvBinary:
-                            if (strcmp(
-                                JsonbToCString(NULL, jsonb_lookup_value->val.binary.data, jsonb_lookup_value->val.binary.len),
-                                JsonbToCString(NULL, jsonb_iterator_value.val.binary.data, jsonb_lookup_value->val.binary.len)
-                                ) == 0)
+                            if ((jsonb_lookup_value->val.binary.len == jsonb_iterator_value.val.binary.len) &&
+                                (memcmp(jsonb_lookup_value->val.binary.data, 
+                                    jsonb_iterator_value.val.binary.data, 
+                                    jsonb_lookup_value->val.binary.len) == 0))
                                 push = false;
                         break;
                         case jbvBool:
@@ -476,13 +474,7 @@ jsonb_delete_jsonb(PG_FUNCTION_ARGS)
                 /* if our value is nested binary data, iterate separately pushing each val */
                 if (jsonb_iterator_value.type == jbvBinary) 
                 {
-                    nest_jsonb_container_a = jsonb_iterator_value.val.binary.data;
-
-                    nest_jsonb_iterator = JsonbIteratorInit(nest_jsonb_container_a);
-                    while ((jsonb_iterator_token = JsonbIteratorNext(&nest_jsonb_iterator, &jsonb_iterator_value, false)) != WJB_DONE) 
-                    {
-                        return_jsonb_value = pushJsonbValue(&state, jsonb_iterator_token, &jsonb_iterator_value);
-                    }
+                    return_jsonb_value = pushJsonbBinary(state, jsonb_iterator_value.val.binary.data);
                 }
                 else 
                 {
@@ -504,6 +496,35 @@ jsonb_delete_jsonb(PG_FUNCTION_ARGS)
     PG_RETURN_JSONB(JsonbValueToJsonb(return_jsonb_value));
 }
 
+Datum jsonb_delete_path(PG_FUNCTION_ARGS);
+
+PG_FUNCTION_INFO_V1(jsonb_delete_path);
+
+/*
+ * Test
+ * jsonb, text[] -> jsonb
+ *
+ */
+Datum 
+jsonb_delete_path(PG_FUNCTION_ARGS)
+{
+    /* pointers to incoming jsonb and text[] data */
+    Jsonb *input_jsonb_a = PG_GETARG_JSONB(0);
+    ArrayType *input_array = PG_GETARG_ARRAYTYPE_P(1);
+    //Jsonb *input_jsonb_b = PG_GETARG_JSONB(2);
+
+    /* pointer to return jsonb data */
+    Jsonb *return_jsonb = NULL;
+
+    return_jsonb = jsonbModifyPath(input_jsonb_a, input_array, NULL);
+
+    PG_FREE_IF_COPY(input_jsonb_a, 0); 
+    PG_FREE_IF_COPY(input_array, 1); 
+    //PG_FREE_IF_COPY(input_jsonb_b, 2); 
+
+    PG_RETURN_JSONB(return_jsonb);
+}
+
 Datum jsonb_concat_jsonb(PG_FUNCTION_ARGS);
 
 PG_FUNCTION_INFO_V1(jsonb_concat_jsonb);
@@ -518,7 +539,7 @@ PG_FUNCTION_INFO_V1(jsonb_concat_jsonb);
 Datum 
 jsonb_concat_jsonb(PG_FUNCTION_ARGS)
 {
-    /* incoming jsonb and text[] data */
+    /* incoming jsonb data */
     Jsonb *input_jsonb_a = PG_GETARG_JSONB(0);
     Jsonb *input_jsonb_b = PG_GETARG_JSONB(1);
     
@@ -534,6 +555,7 @@ jsonb_concat_jsonb(PG_FUNCTION_ARGS)
     int32 jsonb_root_close;
 
     int32 nest_level = 0;
+    bool first = true;
    
     /*
      * check if either supplied jsonb is empty and return the other if so
@@ -571,39 +593,42 @@ jsonb_concat_jsonb(PG_FUNCTION_ARGS)
 
     while ((jsonb_iterator_token = JsonbIteratorNext(&jsonb_iterator, &jsonb_iterator_value, false)) != WJB_DONE) 
     {
-        if (jsonb_iterator_token == jsonb_root_open) 
+        if (jsonb_iterator_token == jsonb_root_open && first) 
         {
             nest_level++;
             if (nest_level == 1) 
                 continue;
         }
-        else if (jsonb_iterator_token == jsonb_root_close) 
+        else if (jsonb_iterator_token == jsonb_root_close && nest_level != 0) 
         {
             nest_level--;
             if (nest_level == 0) 
                 continue;
         }
+        first = false;
 
         return_jsonb_value = pushJsonbValue(&state, jsonb_iterator_token, &jsonb_iterator_value);
     }
 
+    first = true;
     nest_level = 0;
     jsonb_iterator = JsonbIteratorInit(&input_jsonb_b->root);
 
     while ((jsonb_iterator_token = JsonbIteratorNext(&jsonb_iterator, &jsonb_iterator_value, false)) != WJB_DONE)
     {
-        if (jsonb_iterator_token == jsonb_root_open) 
+        if (jsonb_iterator_token == jsonb_root_open && first) 
         {
             nest_level++;
             if (nest_level == 1) 
                 continue;
         }
-        else if (jsonb_iterator_token == jsonb_root_close) 
+        else if (jsonb_iterator_token == jsonb_root_close && nest_level != 0) 
         {
             nest_level--;
             if (nest_level == 0) 
                 continue;
         }
+        first = false;
 
         return_jsonb_value = pushJsonbValue(&state, jsonb_iterator_token, &jsonb_iterator_value);
     }
@@ -614,4 +639,125 @@ jsonb_concat_jsonb(PG_FUNCTION_ARGS)
     PG_FREE_IF_COPY(input_jsonb_b, 1); 
 
     PG_RETURN_JSONB(JsonbValueToJsonb(return_jsonb_value));
+}
+
+Datum jsonb_replace_jsonb(PG_FUNCTION_ARGS);
+
+PG_FUNCTION_INFO_V1(jsonb_replace_jsonb);
+
+/*
+ * Operator function to replace json in left operand where keys match 
+ * in the right operand.
+ *
+ * jsonb, jsonb -> jsonb
+ *
+ */
+Datum 
+jsonb_replace_jsonb(PG_FUNCTION_ARGS)
+{
+    /* incoming jsonb data */
+    Jsonb *input_jsonb_a = PG_GETARG_JSONB(0);
+    Jsonb *input_jsonb_b = PG_GETARG_JSONB(1);
+    
+    /* return jsonb value data to be converted to jsonb on return */
+    JsonbParseState *state = NULL;
+    JsonbValue *return_jsonb_value = NULL;
+
+    /* lookup jsonb value data */
+    JsonbValue  jsonb_lookup_key;
+    JsonbValue *jsonb_lookup_value = NULL;
+    uint32 jsonb_lookup_flags;
+
+    /* iterator for input_jsonb_b */
+    JsonbIterator *jsonb_iterator;
+    JsonbValue jsonb_iterator_value;
+    int32 jsonb_iterator_token;
+
+    /*
+     * check if  supplied replacement jsonb is empty and return unchanged if so
+     */
+    if (JB_ROOT_COUNT(input_jsonb_b) == 0)
+        PG_RETURN_JSONB(input_jsonb_a);
+
+    if (JB_ROOT_IS_OBJECT(input_jsonb_a))
+        jsonb_lookup_flags = JB_FOBJECT;
+    else
+        jsonb_lookup_flags = JB_FOBJECT | JB_FARRAY;
+
+    jsonb_iterator = JsonbIteratorInit(&input_jsonb_a->root);
+    while ((jsonb_iterator_token = JsonbIteratorNext(&jsonb_iterator, &jsonb_iterator_value, true)) != WJB_DONE) 
+    {
+        if ((jsonb_iterator_token == WJB_ELEM ) && (jsonb_iterator_value.type == jbvBinary))
+        {
+            return_jsonb_value = pushJsonbBinary(state, jsonb_iterator_value.val.binary.data);
+        }
+        else
+        {
+            return_jsonb_value = pushJsonbValue(&state, jsonb_iterator_token, &jsonb_iterator_value);
+        }
+        Assert(jsonb_iterator_token != WJB_VALUE);
+
+        if ( jsonb_iterator_token == WJB_KEY )
+        {
+            jsonb_lookup_key.type = jbvString;
+            jsonb_lookup_key.val.string.val = jsonb_iterator_value.val.string.val;
+            jsonb_lookup_key.val.string.len = jsonb_iterator_value.val.string.len;
+
+            jsonb_iterator_token = JsonbIteratorNext(&jsonb_iterator, &jsonb_iterator_value, true);
+            Assert(sonb_iterator_token == WJB_VALUE);
+
+            jsonb_lookup_value = findJsonbValueFromContainer(&input_jsonb_b->root,
+                jsonb_lookup_flags, &jsonb_lookup_key);
+
+            /* if there's nothing to replace push the original value */
+            if (jsonb_lookup_value == NULL) 
+            {
+                jsonb_lookup_value = &jsonb_iterator_value;
+            }
+
+            /* if our value is nested binary data, iterate separately pushing each val */
+            if (jsonb_lookup_value->type == jbvBinary)
+            {
+                return_jsonb_value = pushJsonbBinary(state, jsonb_lookup_value->val.binary.data);
+            }
+            else 
+            {
+                return_jsonb_value = pushJsonbValue(&state, WJB_VALUE, jsonb_lookup_value);
+            }
+        }
+    }
+
+    PG_FREE_IF_COPY(input_jsonb_a, 0); 
+    PG_FREE_IF_COPY(input_jsonb_b, 1); 
+
+    PG_RETURN_JSONB(JsonbValueToJsonb(return_jsonb_value));
+}
+
+Datum jsonb_replace_path(PG_FUNCTION_ARGS);
+
+PG_FUNCTION_INFO_V1(jsonb_replace_path);
+
+/*
+ * Test
+ * jsonb, text[], jsonb -> jsonb
+ *
+ */
+Datum 
+jsonb_replace_path(PG_FUNCTION_ARGS)
+{
+    /* pointers to incoming jsonb and text[] data */
+    Jsonb *input_jsonb_a = PG_GETARG_JSONB(0);
+    ArrayType *input_array = PG_GETARG_ARRAYTYPE_P(1);
+    Jsonb *input_jsonb_b = PG_GETARG_JSONB(2);
+
+    /* pointer to return jsonb data */
+    Jsonb *return_jsonb = NULL;
+
+    return_jsonb = jsonbModifyPath(input_jsonb_a, input_array, input_jsonb_b);
+
+    PG_FREE_IF_COPY(input_jsonb_a, 0); 
+    PG_FREE_IF_COPY(input_array, 1); 
+    PG_FREE_IF_COPY(input_jsonb_b, 2); 
+
+    PG_RETURN_JSONB(return_jsonb);
 }
