@@ -17,7 +17,7 @@ The following behave like hstore 1.x operators, i.e. without nested jsonb traver
 * replacement using **=#** operator
   * jsonb_replace(jsonb, jsonb)
 
-The following are intended to eventually function like hstor 2.0 operators
+The following are intended to eventually function like hstore 2.0 operators
 
 * deletion at chained path using **#-** operator
     jsonb_delete_path(jsonb, text[])
