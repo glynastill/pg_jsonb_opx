@@ -20,6 +20,6 @@ The following behave like hstore 1.x operators, i.e. without nested jsonb traver
 The following are intended to eventually function like hstore 2.0 operators
 
 * deletion at chained path using **#-** operator
-    jsonb_delete_path(jsonb, text[])
+  * jsonb_delete_path(jsonb, text[])
 * replacement at chained path using function (no operator)
-    jsonb_replace_path(jsonb, text[], jsonb)
+  * jsonb_replace_path(jsonb, text[], jsonb)
