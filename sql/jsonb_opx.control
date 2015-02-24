@@ -1,5 +1,0 @@
-# pg_opx extension
-comment = 'hstore style functions and operators for jsonb'
-default_version = '1.1'
-module_pathname = '$libdir/jsonb_opx'
-relocatable = true

@@ -45,34 +45,16 @@ jsonb_delete_key(PG_FUNCTION_ARGS)
     JsonbParseState *state = NULL;
     JsonbValue *return_jsonb_value = NULL;
 
-    /* pointer to iterator for input_jsonb and lookup value data */
-    JsonbValue  jsonb_lookup_key;
-    JsonbValue *jsonb_lookup_value = NULL;
+    /* pointer to iterator for input_jsonb value data */
     JsonbIterator *jsonb_iterator;
     JsonbValue  jsonb_iterator_value;
     int32 jsonb_iterator_token;
 
     /* variables used for skip logic */
-    int32 skip_key = 0;
+    int32 skip_level = 0;
     int32 nest_level = 0;
     int32 array_level = 0;
-
-    /*
-     * if we are not deaing with an array first check to make sure the key exists 
-     * this is potentially just extra unwanted work 
-     */
-    if (!JB_ROOT_IS_ARRAY(input_jsonb)) 
-    {
-        jsonb_lookup_key.type = jbvString;
-        jsonb_lookup_key.val.string.val = VARDATA_ANY(input_text);
-        jsonb_lookup_key.val.string.len = VARSIZE_ANY_EXHDR(input_text);
-
-        jsonb_lookup_value = findJsonbValueFromContainer(&input_jsonb->root,
-            JB_FOBJECT | JB_FARRAY, &jsonb_lookup_key);
-
-        if (jsonb_lookup_value == NULL)
-            PG_RETURN_JSONB(input_jsonb);
-    }
+    bool push = true;
 
     /*
     * If we've been supplied with an existing key iterate round json data and rebuild 
@@ -88,78 +70,63 @@ jsonb_delete_key(PG_FUNCTION_ARGS)
 
     while ((jsonb_iterator_token = JsonbIteratorNext(&jsonb_iterator, &jsonb_iterator_value, false)) != WJB_DONE) 
     {
+        push = true;
         switch (jsonb_iterator_token)
         {
         case WJB_BEGIN_ARRAY:
             array_level++;
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_BEGIN_ARRAY, NULL);
             break;
         case WJB_BEGIN_OBJECT:
             nest_level++;
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
             break;
         case WJB_ELEM:
-            /* only match array elements if they are text */
-            if (skip_key == 0 && nest_level == 0 && array_level > 0) 
+        case WJB_KEY:
+            if (skip_level == 0 && ((jsonb_iterator_token == WJB_KEY && nest_level == 1 && array_level == 0) ||
+                    (jsonb_iterator_token == WJB_ELEM && nest_level == 0 && array_level == 1)))
             {
-                if (jsonb_iterator_value.type == jbvString) 
+                if (jsonb_iterator_value.type == jbvString)
                 {
                     if ((jsonb_iterator_value.val.string.len == VARSIZE_ANY_EXHDR(input_text)) &&
                         (memcmp(jsonb_iterator_value.val.string.val,
                             VARDATA_ANY(input_text),
                             jsonb_iterator_value.val.string.len) == 0))
-                        break;
+                    {
+
+                            if (jsonb_iterator_token == WJB_ELEM)
+                                push = false;
+                            else
+                                skip_level = nest_level;
+                    }
                 }
             }
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_ELEM, &jsonb_iterator_value);
-            break;
-        case WJB_KEY:
-            /* Check each key against our array of keys */
-            if (skip_key > 0) 
-            {
-                skip_key++;
-            }
-            else if (nest_level == 1 && array_level == 0)
-            {
-                if ((jsonb_iterator_value.val.string.len == VARSIZE_ANY_EXHDR(input_text)) &&
-                    (memcmp(jsonb_iterator_value.val.string.val,
-                        VARDATA_ANY(input_text),
-                        jsonb_iterator_value.val.string.len) == 0))
-                {
-                    skip_key++;
-                    break;
-                }
-            }
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_KEY, &jsonb_iterator_value);
-            break;
-        case WJB_VALUE:
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_VALUE, &jsonb_iterator_value);
-            else if (skip_key > 0)
-                skip_key--;
+        }
+
+        if (push && (skip_level == 0 || nest_level < skip_level))
+        {
+            return_jsonb_value = pushJsonbValueBlind(&state, jsonb_iterator_token, &jsonb_iterator_value);
+        }
+
+        switch (jsonb_iterator_token)
+        {
+        case WJB_END_OBJECT:
+            nest_level--;
+            if (skip_level == nest_level && array_level == 0)
+                skip_level = 0;
             break;
         case WJB_END_ARRAY:
             array_level--;
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_END_ARRAY, NULL);
-            else if (skip_key > 0 && array_level == 0)
-                skip_key--;
+            if (skip_level == nest_level && array_level == 0)
+                skip_level = 0;
             break;
-        case WJB_END_OBJECT:
-            nest_level--;
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
-            else if (skip_key > 0)
-                skip_key--;
-            break;
-        default:
-            elog(ERROR, "invalid JsonbIteratorNext rc: %d", jsonb_iterator_token);                
+        case WJB_VALUE:
+            if (skip_level == nest_level)
+                skip_level = 0;
         }
     }
+
+    if (JB_ROOT_IS_SCALAR(input_jsonb) && !return_jsonb_value->val.array.rawScalar && return_jsonb_value->val.array.nElems == 1)
+        return_jsonb_value->val.array.rawScalar = true;
+
     PG_FREE_IF_COPY(input_jsonb, 0);
     PG_FREE_IF_COPY(input_text, 1);
 
@@ -191,15 +158,16 @@ jsonb_delete_keys(PG_FUNCTION_ARGS)
     JsonbParseState *state = NULL;
     JsonbValue *return_jsonb_value = NULL;
 
-    /* pointer to iterator for input_jsonb and lookup value data */
+    /* pointer to iterator for input_jsonb value data */
     JsonbIterator *jsonb_iterator;
     JsonbValue  jsonb_iterator_value;
     int32 jsonb_iterator_token;
 
     /* variables used for skip logic */
-    int32 skip_key = 0;
+    int32 skip_level = 0;
     int32 nest_level = 0;
     int32 array_level = 0;
+    bool push = true;
 
     /* array element variables for use during deconstruction */
     Datum *datums;
@@ -230,7 +198,7 @@ jsonb_delete_keys(PG_FUNCTION_ARGS)
     * If we've been supplied with existing keys iterate round json data and rebuild 
     * with keys/elements excluded.
     *
-    * skip_key, nest_level and array_level are crude counts to check if the the value 
+    * skip_level, nest_level and array_level are crude counts to check if the the value 
     * for the key is closed and ensure we don't match on keys within nested objects.  
     * Because we are recursing into nested elements but blindly just pushing them onto 
     * the return value we can get away without deeper knowledge of the json?
@@ -239,29 +207,27 @@ jsonb_delete_keys(PG_FUNCTION_ARGS)
 
     while ((jsonb_iterator_token = JsonbIteratorNext(&jsonb_iterator, &jsonb_iterator_value, false)) != WJB_DONE) {
 
+        push = true; 
         switch (jsonb_iterator_token)
         {
         case WJB_BEGIN_ARRAY:
             array_level++;
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_BEGIN_ARRAY, NULL);
             break;
         case WJB_BEGIN_OBJECT:
             nest_level++;
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
             break;
         case WJB_ELEM:
-            /* only match array elements if they are text or null */
-            if (skip_key == 0 && nest_level == 0 && array_level > 0) 
+        case WJB_KEY:
+            if (skip_level == 0 && ((jsonb_iterator_token == WJB_KEY && nest_level == 1 && array_level == 0) ||
+                    (jsonb_iterator_token == WJB_ELEM && nest_level == 0 && array_level == 1)))
             {
-                if (jsonb_iterator_value.type == jbvString || jsonb_iterator_value.type == jbvNull) 
+                if (jsonb_iterator_value.type == jbvString || jsonb_iterator_value.type == jbvNull)
                 {
                     for (i=0; i<count; i++)
                     {
                         if (!nulls[i])
                             array_element_text = DatumGetTextP(datums[i]);
-                        else 
+                        else
                             array_element_text = NULL;
 
                         if (((array_element_text != NULL) && (jsonb_iterator_value.val.string.len == VARSIZE_ANY_EXHDR(array_element_text)) &&
@@ -269,73 +235,43 @@ jsonb_delete_keys(PG_FUNCTION_ARGS)
                                 VARDATA_ANY(array_element_text),
                                 jsonb_iterator_value.val.string.len) == 0)) || ((array_element_text == NULL) && (jsonb_iterator_value.type == jbvNull)))
                         {
-                            skip_key = 1;
+                            if (jsonb_iterator_token == WJB_ELEM)
+                                push = false;
+                            else
+                                skip_level = nest_level;
                             break;
                         }
                     }
-                    if (skip_key == 1) 
-                    {
-                        skip_key = 0;
-                        break;
-                    }
                 }
             }
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_ELEM, &jsonb_iterator_value);
-            break;
-        case WJB_KEY:
-            /* Check each key against our array of keys */
-            if (skip_key > 0) 
-            {
-                skip_key++;
-            }
-            else if (nest_level == 1 && array_level == 0)
-            {
-                for (i=0; i<count; i++)
-                {
-                    if (nulls[i])
-                        continue;
+        }
 
-                   array_element_text = DatumGetTextP(datums[i]);
+        if (push && (skip_level == 0 || nest_level < skip_level))
+        {
+            return_jsonb_value = pushJsonbValueBlind(&state, jsonb_iterator_token, &jsonb_iterator_value);
+        }
 
-                    if ((jsonb_iterator_value.val.string.len == VARSIZE_ANY_EXHDR(array_element_text)) &&
-                        (memcmp(jsonb_iterator_value.val.string.val,
-                            VARDATA_ANY(array_element_text),
-                            jsonb_iterator_value.val.string.len) == 0))
-                    {
-                        skip_key++;
-                        break;
-                    }
-                }
-            }
-
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_KEY, &jsonb_iterator_value);
-            break;
-        case WJB_VALUE:
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_VALUE, &jsonb_iterator_value);
-            else if (skip_key > 0)
-                skip_key--;
+        switch (jsonb_iterator_token)
+        {
+        case WJB_END_OBJECT:
+            nest_level--;
+            if (skip_level == nest_level && array_level == 0)
+                skip_level = 0;
             break;
         case WJB_END_ARRAY:
             array_level--;
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_END_ARRAY, NULL);
-            else if (skip_key > 0 && array_level == 0)
-                skip_key--;
+            if (skip_level == nest_level && array_level == 0)
+                skip_level = 0;
             break;
-        case WJB_END_OBJECT:
-            nest_level--;
-            if (skip_key == 0)
-                return_jsonb_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
-            else if (skip_key > 0)
-                skip_key--;
-            break;
-        default:
-            elog(ERROR, "invalid JsonbIteratorNext rc: %d", jsonb_iterator_token);
+        case WJB_VALUE:
+            if (skip_level == nest_level)
+                skip_level = 0;
         } 
     }
+
+    if (JB_ROOT_IS_SCALAR(input_jsonb) && !return_jsonb_value->val.array.rawScalar && return_jsonb_value->val.array.nElems == 1)
+        return_jsonb_value->val.array.rawScalar = true;
+
     PG_FREE_IF_COPY(input_jsonb, 0); 
     PG_FREE_IF_COPY(input_array, 1); 
 
@@ -490,6 +426,9 @@ jsonb_delete_jsonb(PG_FUNCTION_ARGS)
 
     }
 
+    if (JB_ROOT_IS_SCALAR(input_jsonb_a) && !return_jsonb_value->val.array.rawScalar && return_jsonb_value->val.array.nElems == 1)
+        return_jsonb_value->val.array.rawScalar = true;
+
     PG_FREE_IF_COPY(input_jsonb_a, 0); 
     PG_FREE_IF_COPY(input_jsonb_b, 1); 
 
@@ -511,7 +450,6 @@ jsonb_delete_path(PG_FUNCTION_ARGS)
     /* pointers to incoming jsonb and text[] data */
     Jsonb *input_jsonb_a = PG_GETARG_JSONB(0);
     ArrayType *input_array = PG_GETARG_ARRAYTYPE_P(1);
-    //Jsonb *input_jsonb_b = PG_GETARG_JSONB(2);
 
     /* pointer to return jsonb data */
     Jsonb *return_jsonb = NULL;
@@ -520,7 +458,6 @@ jsonb_delete_path(PG_FUNCTION_ARGS)
 
     PG_FREE_IF_COPY(input_jsonb_a, 0); 
     PG_FREE_IF_COPY(input_array, 1); 
-    //PG_FREE_IF_COPY(input_jsonb_b, 2); 
 
     PG_RETURN_JSONB(return_jsonb);
 }
@@ -555,8 +492,8 @@ jsonb_concat_jsonb(PG_FUNCTION_ARGS)
     int32 jsonb_root_close;
 
     int32 nest_level = 0;
-    bool first = true;
-   
+    bool first = true; 
+
     /*
      * check if either supplied jsonb is empty and return the other if so
      */
@@ -593,43 +530,49 @@ jsonb_concat_jsonb(PG_FUNCTION_ARGS)
 
     while ((jsonb_iterator_token = JsonbIteratorNext(&jsonb_iterator, &jsonb_iterator_value, false)) != WJB_DONE) 
     {
-        if (jsonb_iterator_token == jsonb_root_open && first) 
+        if (jsonb_iterator_token == jsonb_root_open && (first || nest_level > 0)) 
         {
             nest_level++;
-            if (nest_level == 1) 
+            if (nest_level == 1)
+            { 
+                first = false;
                 continue;
+            }
         }
-        else if (jsonb_iterator_token == jsonb_root_close && nest_level != 0) 
+        else if (jsonb_iterator_token == jsonb_root_close && nest_level > 0) 
         {
             nest_level--;
             if (nest_level == 0) 
                 continue;
         }
-        first = false;
 
+        first = false;
         return_jsonb_value = pushJsonbValueBlind(&state, jsonb_iterator_token, &jsonb_iterator_value);
     }
 
-    first = true;
     nest_level = 0;
+    first = true;
     jsonb_iterator = JsonbIteratorInit(&input_jsonb_b->root);
 
     while ((jsonb_iterator_token = JsonbIteratorNext(&jsonb_iterator, &jsonb_iterator_value, false)) != WJB_DONE)
     {
-        if (jsonb_iterator_token == jsonb_root_open && first) 
+        if (jsonb_iterator_token == jsonb_root_open && (first || nest_level > 0)) 
         {
             nest_level++;
             if (nest_level == 1) 
+            {
+                first = false;
                 continue;
+            }
         }
-        else if (jsonb_iterator_token == jsonb_root_close && nest_level != 0) 
+        else if (jsonb_iterator_token == jsonb_root_close && nest_level > 0) 
         {
             nest_level--;
             if (nest_level == 0) 
                 continue;
         }
-        first = false;
 
+        first = false;
         return_jsonb_value = pushJsonbValueBlind(&state, jsonb_iterator_token, &jsonb_iterator_value);
     }
 
@@ -727,6 +670,9 @@ jsonb_replace_jsonb(PG_FUNCTION_ARGS)
             }
         }
     }
+
+    if (JB_ROOT_IS_SCALAR(input_jsonb_a) && !return_jsonb_value->val.array.rawScalar && return_jsonb_value->val.array.nElems == 1)
+        return_jsonb_value->val.array.rawScalar = true;
 
     PG_FREE_IF_COPY(input_jsonb_a, 0); 
     PG_FREE_IF_COPY(input_jsonb_b, 1); 

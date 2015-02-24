@@ -40,8 +40,7 @@ pushJsonbValueBlind(JsonbParseState **pstate, JsonbIteratorToken jsonb_iterator_
 
     if ((jsonb_iterator_token == WJB_KEY) ||
             (jsonb_iterator_token == WJB_VALUE) ||
-            (jsonb_iterator_token == WJB_ELEM) ||
-            (jsonb_iterator_token == WJB_BEGIN_ARRAY && jsonb_iterator_value->val.array.rawScalar))
+            (jsonb_iterator_token == WJB_ELEM))
             {
             return_jsonb_value = pushJsonbValue(pstate, jsonb_iterator_token, jsonb_iterator_value);
             }
@@ -62,7 +61,6 @@ jsonbModifyPath(Jsonb *jsonb_a, ArrayType *array_path, Jsonb *jsonb_b)
     JsonbIterator *jsonb_iterator;
     JsonbValue jsonb_iterator_value;
     int32 jsonb_iterator_token;
-    int32 jsonb_last_token = 0;
 
     JsonbIterator *jsonb_replacement_iterator;
     JsonbValue jsonb_replacement_iterator_value;
@@ -155,35 +153,45 @@ jsonbModifyPath(Jsonb *jsonb_a, ArrayType *array_path, Jsonb *jsonb_b)
                             if (jsonb_b != NULL) {
                                 jsonb_replacement_iterator = JsonbIteratorInit(&jsonb_b->root);
 
-                                while ((jsonb_replacement_iterator_token = JsonbIteratorNext(&jsonb_replacement_iterator, &jsonb_replacement_iterator_value, false)) != WJB_DONE)
+                                /* if the replacement value is a scalar then it will replace the current element or value */
+                                if (JB_ROOT_IS_SCALAR(jsonb_b)) 
                                 {
-                                    if (((jsonb_last_token == jsonb_replacement_iterator_token) && 
-                                        (jsonb_last_token != WJB_VALUE)) || 
-                                        ((jsonb_last_token == WJB_VALUE) && 
-                                        ((jsonb_replacement_iterator_token == WJB_BEGIN_OBJECT) || 
-                                        (jsonb_replacement_iterator_token == WJB_BEGIN_ARRAY)))) 
+                                    jsonb_replacement_iterator_token = JsonbIteratorNext(&jsonb_replacement_iterator, &jsonb_replacement_iterator_value, false);
+                                    jsonb_replacement_iterator_token = JsonbIteratorNext(&jsonb_replacement_iterator, &jsonb_replacement_iterator_value, false);
+                                    
+                                    if (jsonb_iterator_token == WJB_ELEM) 
                                     {
-                                        push_nest_level++;
+                                        return_jsonb_value = pushJsonbValue(&state, WJB_ELEM, &jsonb_replacement_iterator_value);
                                     }
+                                    else
+                                    {
+                                        return_jsonb_value = pushJsonbValue(&state, WJB_KEY, &jsonb_iterator_value);
+                                        return_jsonb_value = pushJsonbValue(&state, WJB_VALUE, &jsonb_replacement_iterator_value);
+                                    }
+                                }
+                                /* otherwise assume this is the replacement for the whole element /key-value pair */
+                                else {
+                                    while ((jsonb_replacement_iterator_token = JsonbIteratorNext(&jsonb_replacement_iterator, &jsonb_replacement_iterator_value, false)) != WJB_DONE)
+                                    {
+                                        if (push_nest_level == 0 && jsonb_iterator_token == WJB_KEY && jsonb_replacement_iterator_token == WJB_BEGIN_ARRAY)
+                                        {
+                                            return_jsonb_value = pushJsonbValue(&state, WJB_KEY, &jsonb_iterator_value);
+                                        }
 
-                                    if ((jsonb_replacement_iterator_token == WJB_KEY) || 
-                                        (jsonb_replacement_iterator_token == WJB_VALUE) || 
-                                        (jsonb_replacement_iterator_token == WJB_ELEM) || (push_nest_level != 1))
-                                    {
-                                        return_jsonb_value = pushJsonbValueBlind(&state, jsonb_replacement_iterator_token, &jsonb_replacement_iterator_value);
-                                    }
+                                        if ((jsonb_replacement_iterator_token == WJB_BEGIN_OBJECT) || (jsonb_replacement_iterator_token == WJB_BEGIN_ARRAY)) 
+                                            push_nest_level++;
 
-                                    if (((jsonb_last_token == WJB_BEGIN_ARRAY) || 
-                                        (jsonb_last_token == WJB_VALUE)) && 
-                                        (jsonb_replacement_iterator_token == WJB_END_ARRAY))
-                                    {
-                                        push_nest_level--;
-                                    }
-                                    else if (((jsonb_last_token == WJB_BEGIN_OBJECT) || 
-                                        (jsonb_last_token == WJB_VALUE)) && 
-                                        (jsonb_replacement_iterator_token == WJB_END_OBJECT))
-                                    {
-                                        push_nest_level--;
+                                        if ((push_nest_level > 1) ||
+                                            (jsonb_iterator_token == WJB_ELEM && jsonb_replacement_iterator_token != WJB_BEGIN_ARRAY && jsonb_replacement_iterator_token != WJB_END_ARRAY) ||
+                                            (jsonb_iterator_token == WJB_KEY && jsonb_replacement_iterator_token != WJB_BEGIN_OBJECT && jsonb_replacement_iterator_token != WJB_END_OBJECT)) 
+                                        {
+                                            return_jsonb_value = pushJsonbValueBlind(&state, jsonb_replacement_iterator_token, &jsonb_replacement_iterator_value);
+                                        }
+
+                                        if ((jsonb_replacement_iterator_token == WJB_END_OBJECT || jsonb_replacement_iterator_token == WJB_END_ARRAY)) 
+                                            push_nest_level--;
+
+                                        Assert(push_nest_level >= 0);
                                     }
                                 }
                             }
@@ -199,7 +207,6 @@ jsonbModifyPath(Jsonb *jsonb_a, ArrayType *array_path, Jsonb *jsonb_b)
         if (push && (skip_level == 0 || nest_level < skip_level)) 
         {
             return_jsonb_value = pushJsonbValueBlind(&state, jsonb_iterator_token, &jsonb_iterator_value);
-            jsonb_last_token = jsonb_iterator_token;
         }
 
         switch (jsonb_iterator_token) 
@@ -220,9 +227,12 @@ jsonbModifyPath(Jsonb *jsonb_a, ArrayType *array_path, Jsonb *jsonb_b)
         }
     }
 
-    if (return_jsonb_value->type == jbvArray && return_jsonb_value->val.array.rawScalar && return_jsonb_value->val.array.nElems == 0)
+    if (return_jsonb_value->type == jbvArray)
     {
-        return_jsonb_value->val.array.rawScalar = false;
+	if (return_jsonb_value->val.array.rawScalar && return_jsonb_value->val.array.nElems == 0)
+	        return_jsonb_value->val.array.rawScalar = false;
+	else if (JB_ROOT_IS_SCALAR(jsonb_a) && !return_jsonb_value->val.array.rawScalar && return_jsonb_value->val.array.nElems == 1)
+	        return_jsonb_value->val.array.rawScalar = true;
     }
 
     return JsonbValueToJsonb(return_jsonb_value);
