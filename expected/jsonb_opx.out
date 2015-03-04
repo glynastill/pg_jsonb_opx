@@ -1,4 +1,4 @@
-CREATE EXTENSION jsonb_opx;
+CREATE EXTENSION jsonb_opx VERSION '1.1';
 -------------------------------------------------------------------------------
 -- Tests for jsonb - text
 -------------------------------------------------------------------------------
@@ -38,7 +38,7 @@ SELECT '["a", {"a":1}, "b"]'::jsonb - 'b'::text;
  ["a", {"a": 1}]
 (1 row)
 
--- text deletion from array containers will only delete string types currently
+-- text deletion from array containers will only delete string elements
 SELECT '[1, "1", "2", 2]'::jsonb - '2'::text;
   ?column?   
 -------------
@@ -152,6 +152,58 @@ SELECT '{"a":{"b":{"c":[1,[2,3,[4]],{"d":1}]}, "c":[1,2,3,4]}, "d":2}'::jsonb - 
  {"d": 2}
 (1 row)
 
+-- function is strict, so - null returns null - assume SQL nulls and jsonb nulls are not equal anyway
+SELECT '["1", "2", true, null]'::jsonb - null::text;
+ ?column? 
+----------
+ 
+(1 row)
+
+-------------------------------------------------------------------------------
+-- Tests for jsonb - numeric
+-------------------------------------------------------------------------------
+-- Only matches numeric array element types
+SELECT '[1, "1", "2", 2]'::jsonb - 2;
+   ?column?    
+---------------
+ [1, "1", "2"]
+(1 row)
+
+SELECT '[2]'::jsonb - 2;
+ ?column? 
+----------
+ []
+(1 row)
+
+SELECT '2'::jsonb - 2;
+ ?column? 
+----------
+ []
+(1 row)
+
+-- Does nothing for objects
+SELECT '{"2":{"b":3, "c":[1,2,3,4]}, "d":2}'::jsonb - 2;
+                  ?column?                  
+--------------------------------------------
+ {"2": {"b": 3, "c": [1, 2, 3, 4]}, "d": 2}
+(1 row)
+
+-------------------------------------------------------------------------------
+-- Tests for jsonb - boolean
+-------------------------------------------------------------------------------
+-- Only matches boolean array element types
+SELECT '[1, "1", false, true, null]'::jsonb - false;
+       ?column?       
+----------------------
+ [1, "1", true, null]
+(1 row)
+
+SELECT '[1, "1", false, true, null]'::jsonb - true;
+       ?column?        
+-----------------------
+ [1, "1", false, null]
+(1 row)
+
 -------------------------------------------------------------------------------
 -- Tests for jsonb - text[]
 -------------------------------------------------------------------------------
@@ -247,7 +299,7 @@ SELECT '{"a":{"b":{"c":[1,[2,3,[4]],{"d":1}]}, "c":[1,2,3,4]}, "d":2}'::jsonb - 
  {"d": 2}
 (1 row)
 
--- simple text[] deletion from an object container should only match keys or nulls
+-- simple text[] deletion from an object container should only match keys
 SELECT '{"a": 1, "b": 2, "c": 3}'::jsonb - ARRAY['1',' 2'];
          ?column?         
 --------------------------
@@ -260,17 +312,81 @@ SELECT '["a",2,{"a":1, "b":2}]'::jsonb - '{a}'::text[];
  [2, {"a": 1, "b": 2}]
 (1 row)
 
--- here we treat SQL nulls and json nulls as equal - bad?
+-- SQL nulls and jsonb nulls are not equal
 SELECT '["1",null,2]'::jsonb - ARRAY[null];
- ?column? 
-----------
- ["1", 2]
+    ?column?    
+----------------
+ ["1", null, 2]
 (1 row)
 
 SELECT '["1",2]'::jsonb - ARRAY[null];
  ?column? 
 ----------
  ["1", 2]
+(1 row)
+
+-------------------------------------------------------------------------------
+-- Tests for jsonb - numeric[]
+-------------------------------------------------------------------------------
+-- Only matches numeric array element types
+SELECT '[1, "1", "2", 2]'::jsonb - ARRAY[2];
+   ?column?    
+---------------
+ [1, "1", "2"]
+(1 row)
+
+SELECT '[1, "1", "2", 2]'::jsonb - ARRAY[1,2];
+  ?column?  
+------------
+ ["1", "2"]
+(1 row)
+
+SELECT '[2]'::jsonb  - ARRAY[1,2];
+ ?column? 
+----------
+ []
+(1 row)
+
+SELECT '2'::jsonb  - ARRAY[1,2];
+ ?column? 
+----------
+ []
+(1 row)
+
+-- Does nothing for objects
+SELECT '{"2":{"b":3, "c":[1,2,3,4]}, "d":2}'::jsonb - ARRAY[1,2];
+                  ?column?                  
+--------------------------------------------
+ {"2": {"b": 3, "c": [1, 2, 3, 4]}, "d": 2}
+(1 row)
+
+-------------------------------------------------------------------------------
+-- Tests for jsonb - boolean[]
+-------------------------------------------------------------------------------
+-- Only matches boolean array element types
+SELECT '[1, "1", false, true, null]'::jsonb - ARRAY[false];
+       ?column?       
+----------------------
+ [1, "1", true, null]
+(1 row)
+
+SELECT '[1, "1", false, true, null]'::jsonb - ARRAY[true];
+       ?column?        
+-----------------------
+ [1, "1", false, null]
+(1 row)
+
+SELECT '[1, "1", false, true, null]'::jsonb - ARRAY[true, false];
+    ?column?    
+----------------
+ [1, "1", null]
+(1 row)
+
+-- Again nulls are not equal
+SELECT '[1, "1", false, true, null]'::jsonb - ARRAY[true, false, null];
+    ?column?    
+----------------
+ [1, "1", null]
 (1 row)
 
 -------------------------------------------------------------------------------
@@ -285,9 +401,9 @@ SELECT '{"a": 1, "b": 2, "c": 3}'::jsonb - '{"a": 4, "b": 2}'::jsonb;
 
 -- jsonb deletion from an array should only match on key
 SELECT '["a", "b", "c"]'::jsonb - '{"a": 4, "b": 2}'::jsonb;
- ?column? 
-----------
- ["c"]
+    ?column?     
+-----------------
+ ["a", "b", "c"]
 (1 row)
 
 -- jsonb deletion from nested objects should not be part matched
@@ -396,13 +512,36 @@ SELECT '{"a": "test", "b": 2.2, "c": {"a": false}, "d":true, "e":[1,2,"a"]}'::js
  {}
 (1 row)
 
--- known issues !!!!
--- lookups of lhs values in rhs jsonb use findJsonbValueFromContainer which does 
--- not allow looking up non-scalar elements resulting in "invalid jsonb scalar type"
 SELECT '["a",2,{"a":1, "b":2}]'::jsonb - '[[1]]'::jsonb;
-ERROR:  invalid jsonb scalar type
+          ?column?          
+----------------------------
+ ["a", 2, {"a": 1, "b": 2}]
+(1 row)
+
 SELECT '["a",2,{"a":1, "b":2}]'::jsonb - '[{"a":1}]'::jsonb;
-ERROR:  invalid jsonb scalar type
+          ?column?          
+----------------------------
+ ["a", 2, {"a": 1, "b": 2}]
+(1 row)
+
+SELECT '["a",2,{"a":1, "b":2}]'::jsonb - '[{"a":1, "b":2}]'::jsonb;
+ ?column? 
+----------
+ ["a", 2]
+(1 row)
+
+SELECT '["a",2,{"a":1, "b":2}]'::jsonb - '["a"]'::jsonb;
+       ?column?        
+-----------------------
+ [2, {"a": 1, "b": 2}]
+(1 row)
+
+SELECT '["a",2,{"a":1, "b":2}]'::jsonb - '[2]'::jsonb;
+        ?column?         
+-------------------------
+ ["a", {"a": 1, "b": 2}]
+(1 row)
+
 -------------------------------------------------------------------------------
 -- Tests for jsonb || jsonb
 -------------------------------------------------------------------------------
@@ -549,6 +688,12 @@ SELECT '{"a":{"b":3, "c":[1,{"r":[null,{"u":1}]},2,3,4]}, "d":2}'::jsonb  #= '{"
                               ?column?                               
 ---------------------------------------------------------------------
  {"a": {"b": 3, "c": [1, {"r": [true, {"u": 2}]}, 3, 4, 5]}, "d": 2}
+(1 row)
+
+SELECT '["a","b","c"]'::jsonb #= '{"a":1}'::jsonb;
+    ?column?     
+-----------------
+ ["a", "b", "c"]
 (1 row)
 
 -------------------------------------------------------------------------------
@@ -892,7 +1037,7 @@ SELECT jsonb_replace_path('"a"', ARRAY['z'], '{"f":10}'::jsonb);
 SELECT jsonb_replace_path('[null, "a"]', ARRAY[null], '"b"'::jsonb); 
  jsonb_replace_path 
 --------------------
- ["b", "a"]
+ [null, "a"]
 (1 row)
 
 SELECT jsonb_replace_path('[1,2,3,"4"]', ARRAY['4'], '"5"'::jsonb); 

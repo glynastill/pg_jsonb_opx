@@ -10,22 +10,71 @@ CREATE OR REPLACE FUNCTION jsonb_delete (jsonb, text)
 RETURNS jsonb
     AS 'MODULE_PATHNAME', 'jsonb_delete_key'
 LANGUAGE C IMMUTABLE STRICT; 
-COMMENT ON FUNCTION jsonb_delete(jsonb, text) IS 'delete key in second argument from first argument';
+COMMENT ON FUNCTION jsonb_delete(jsonb, text) IS 'delete key or string values in second argument from first argument';
 
 DROP OPERATOR IF EXISTS - (jsonb, text);
 CREATE OPERATOR - ( PROCEDURE = jsonb_delete, LEFTARG = jsonb, RIGHTARG = text);
 COMMENT ON OPERATOR - (jsonb, text) IS 'delete key from left operand';
 
 --
+
+CREATE OR REPLACE FUNCTION jsonb_delete(jsonb, numeric)
+RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'jsonb_delete_key'
+LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION jsonb_delete(jsonb, numeric) IS 'delete numeric elements in second argument from first argument';
+
+DROP OPERATOR IF EXISTS - (jsonb, numeric);
+CREATE OPERATOR - ( PROCEDURE = jsonb_delete, LEFTARG = jsonb, RIGHTARG = numeric);
+COMMENT ON OPERATOR - (jsonb, numeric) IS 'delete numeric elements from left operand';
+
+--
+
+CREATE OR REPLACE FUNCTION jsonb_delete(jsonb, boolean)
+RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'jsonb_delete_key'
+LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION jsonb_delete(jsonb, boolean) IS 'delete boolean elements in second argument from first argument';
+
+DROP OPERATOR IF EXISTS - (jsonb, boolean);
+CREATE OPERATOR - ( PROCEDURE = jsonb_delete, LEFTARG = jsonb, RIGHTARG = boolean);
+COMMENT ON OPERATOR - (jsonb, boolean) IS 'delete boolean elements from left operand';
+
+--
+
 CREATE OR REPLACE FUNCTION jsonb_delete(jsonb, text[]) 
 RETURNS jsonb
 	AS 'MODULE_PATHNAME', 'jsonb_delete_keys'
 LANGUAGE C IMMUTABLE STRICT;
-COMMENT ON FUNCTION jsonb_delete(jsonb, text[]) IS 'delete keys in second argument from first argument';
+COMMENT ON FUNCTION jsonb_delete(jsonb, text[]) IS 'delete keys or string values in second argument from first argument';
 
 DROP OPERATOR IF EXISTS - (jsonb, text[]);
 CREATE OPERATOR - ( PROCEDURE = jsonb_delete, LEFTARG = jsonb, RIGHTARG = text[]);
 COMMENT ON OPERATOR - (jsonb, text[]) IS 'delete keys from left operand';
+
+--
+
+CREATE OR REPLACE FUNCTION jsonb_delete(jsonb, numeric[])
+RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'jsonb_delete_keys'
+LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION jsonb_delete(jsonb, numeric[]) IS 'delete numeric elements in second argument from first argument';
+
+DROP OPERATOR IF EXISTS - (jsonb, numeric[]);
+CREATE OPERATOR - ( PROCEDURE = jsonb_delete, LEFTARG = jsonb, RIGHTARG = numeric[]);
+COMMENT ON OPERATOR - (jsonb, numeric[]) IS 'delete numeric elements from left operand';
+
+--
+
+CREATE OR REPLACE FUNCTION jsonb_delete(jsonb, boolean[])
+RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'jsonb_delete_keys'
+LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION jsonb_delete(jsonb, boolean[]) IS 'delete boolean elements in second argument from first argument';
+
+DROP OPERATOR IF EXISTS - (jsonb, boolean[]);
+CREATE OPERATOR - ( PROCEDURE = jsonb_delete, LEFTARG = jsonb, RIGHTARG = boolean[]);
+COMMENT ON OPERATOR - (jsonb, boolean[]) IS 'delete boolean elements from left operand';
 
 --
 

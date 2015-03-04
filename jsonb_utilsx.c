@@ -20,10 +20,10 @@
 JsonbValue * 
 pushJsonbBinary(JsonbParseState **pstate, JsonbContainer *jsonb_container)
 {
-    JsonbIterator *jsonb_iterator;
-    JsonbValue jsonb_iterator_value;
-    int32 jsonb_iterator_token;
-    JsonbValue *return_jsonb_value = NULL;
+    JsonbIterator          *jsonb_iterator;
+    JsonbValue              jsonb_iterator_value;
+    int32                   jsonb_iterator_token;
+    JsonbValue             *return_jsonb_value = NULL;
 
     jsonb_iterator = JsonbIteratorInit((void *)jsonb_container);
     while ((jsonb_iterator_token = JsonbIteratorNext(&jsonb_iterator, &jsonb_iterator_value, false)) != WJB_DONE)
@@ -36,7 +36,7 @@ pushJsonbBinary(JsonbParseState **pstate, JsonbContainer *jsonb_container)
 JsonbValue *
 pushJsonbValueBlind(JsonbParseState **pstate, JsonbIteratorToken jsonb_iterator_token, JsonbValue *jsonb_iterator_value)
 {
-    JsonbValue *return_jsonb_value = NULL;
+    JsonbValue             *return_jsonb_value = NULL;
 
     if ((jsonb_iterator_token == WJB_KEY) ||
             (jsonb_iterator_token == WJB_VALUE) ||
@@ -54,34 +54,34 @@ Jsonb *
 jsonbModifyPath(Jsonb *jsonb_a, ArrayType *array_path, Jsonb *jsonb_b)
 {
     /* pointers to return jsonb value data and state to be converted to jsonb on return */
-    JsonbParseState *state = NULL;
-    JsonbValue *return_jsonb_value = NULL;
+    JsonbParseState        *state = NULL;
+    JsonbValue             *return_jsonb_value = NULL;
 
     /* pointer to iterator for input jsonb */
-    JsonbIterator *jsonb_iterator;
-    JsonbValue jsonb_iterator_value;
-    int32 jsonb_iterator_token;
+    JsonbIterator          *jsonb_iterator;
+    JsonbValue              jsonb_iterator_value;
+    int32                   jsonb_iterator_token;
 
-    JsonbIterator *jsonb_replacement_iterator;
-    JsonbValue jsonb_replacement_iterator_value;
-    int32 jsonb_replacement_iterator_token;
+    JsonbIterator          *jsonb_replacement_iterator;
+    JsonbValue              jsonb_replacement_iterator_value;
+    int32                   jsonb_replacement_iterator_token;
     
     /* 
      * array element variables for use during deconstruction 
      * count is the depth we will be looking from the first matching key
      */
-    Datum *datums;
-    bool *nulls;
-    int32 count; 
+    Datum                  *datums;
+    bool                   *nulls;
+    int32                   count; 
 
     /* the current key we are looking for, starting with the first key */
-    text *key_on = NULL;
-    int32 index_on = 0; 
-    int32 nest_level = 0;
-    int32 array_level = 0;
-    int32 skip_level = 0;
-    int32 push_nest_level = 0;
-    bool push = true;
+    text                   *key_on = NULL;
+    int32                   index_on = 0; 
+    int32                   nest_level = 0;
+    int32                   array_level = 0;
+    int32                   skip_level = 0;
+    int32                   push_nest_level = 0;
+    bool                    push = true;
 
     /* assert input_array is a text array type */
     Assert(ARR_ELEMTYPE(array_path) == TEXTOID);
@@ -119,10 +119,10 @@ jsonbModifyPath(Jsonb *jsonb_a, ArrayType *array_path, Jsonb *jsonb_b)
         {
             case WJB_BEGIN_ARRAY:
                 array_level++;
-            break;
+                break;
             case WJB_BEGIN_OBJECT:
                nest_level++;
-            break;
+                break;
             case WJB_ELEM:
             case WJB_KEY:
                 /*
@@ -133,8 +133,7 @@ jsonbModifyPath(Jsonb *jsonb_a, ArrayType *array_path, Jsonb *jsonb_b)
                 if (skip_level == 0 && ((jsonb_iterator_token == WJB_KEY && nest_level-1 == index_on && array_level == 0) ||
                         (jsonb_iterator_token == WJB_ELEM && nest_level == 0 && array_level == 1)))
                 {
-                    if ((jsonb_iterator_value.type == jbvNull && key_on == NULL) ||
-                        (key_on != NULL && (jsonb_iterator_value.val.string.len == VARSIZE_ANY_EXHDR(key_on)) &&
+                    if ((!nulls[index_on] && (jsonb_iterator_value.val.string.len == VARSIZE_ANY_EXHDR(key_on)) &&
                         (memcmp(jsonb_iterator_value.val.string.val, VARDATA_ANY(key_on), jsonb_iterator_value.val.string.len) == 0)))
                     {   
                         /* if we have not yet reached the last index in the array / key chain move on and check the next */
@@ -143,8 +142,6 @@ jsonbModifyPath(Jsonb *jsonb_a, ArrayType *array_path, Jsonb *jsonb_b)
                             index_on++;
                             if (!nulls[index_on])
                                 key_on = DatumGetTextP(datums[index_on]);
-                            else
-                                key_on = NULL;
                         }
                         /* if we have reached the last index, the we can modify this level */ 
                         else 
@@ -169,7 +166,7 @@ jsonbModifyPath(Jsonb *jsonb_a, ArrayType *array_path, Jsonb *jsonb_b)
                                         return_jsonb_value = pushJsonbValue(&state, WJB_VALUE, &jsonb_replacement_iterator_value);
                                     }
                                 }
-                                /* otherwise assume this is the replacement for the whole element /key-value pair */
+                                /* otherwise assume this is the replacement for the whole element or key-value pair */
                                 else {
                                     while ((jsonb_replacement_iterator_token = JsonbIteratorNext(&jsonb_replacement_iterator, &jsonb_replacement_iterator_value, false)) != WJB_DONE)
                                     {
@@ -202,6 +199,7 @@ jsonbModifyPath(Jsonb *jsonb_a, ArrayType *array_path, Jsonb *jsonb_b)
                         }
                     } 
                 }
+            /* switch end */
         }
 
         if (push && (skip_level == 0 || nest_level < skip_level)) 
@@ -215,15 +213,16 @@ jsonbModifyPath(Jsonb *jsonb_a, ArrayType *array_path, Jsonb *jsonb_b)
                 nest_level--;
                 if (skip_level == nest_level && array_level == 0)
                     skip_level = 0;
-            break;
+                break;
             case WJB_END_ARRAY:
                 array_level--;
                 if (skip_level == nest_level && array_level == 0)
                     skip_level = 0;
-            break;
+                break;
             case WJB_VALUE:
                 if (skip_level == nest_level)
                     skip_level = 0;
+            /* switch end */
         }
     }
 

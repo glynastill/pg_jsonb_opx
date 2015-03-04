@@ -19,3 +19,11 @@ RETURNS jsonb
     AS 'MODULE_PATHNAME', 'jsonb_replace_path'
 LANGUAGE C IMMUTABLE STRICT;
 COMMENT ON FUNCTION jsonb_replace_path(jsonb, text[], jsonb) IS 'follow path of keys in order supplied in array and replace end-point key value pair with supplied jsonb';
+
+--
+
+CREATE OR REPLACE FUNCTION jsonb_append_path(jsonb, text[], jsonb)
+RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'jsonb_append_path'
+LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION jsonb_append_path(jsonb, text[], jsonb) IS 'follow path of keys in order supplied in array and append to end-point key value pair with supplied jsonb';
