@@ -839,7 +839,8 @@ jsonb_append_path(PG_FUNCTION_ARGS)
     /* pointer to return jsonb data */
     Jsonb                  *return_jsonb = NULL;
 
-    return_jsonb = jsonbModifyPath(input_jsonb_a, input_array, input_jsonb_b);
+    elog(ERROR, "not implemented");
+    //return_jsonb = jsonbModifyPath(input_jsonb_a, input_array, input_jsonb_b, true);
 
     PG_FREE_IF_COPY(input_jsonb_a, 0); 
     PG_FREE_IF_COPY(input_array, 1); 
